@@ -45,15 +45,6 @@ class LSTMModel(nn.Module):
         numerical_features = torch.stack(numerical_features, dim=2)
         output = torch.cat(embeddings_list + [numerical_features], dim=2)
         return output
-    
-    def get_last_hidden(self, x):
-        cat = self._get_embeddings(x)
-        
-        output, (hidden, _) = self.lstm(cat)
-        last_hidden = hidden[-1]
-        lengths = (x[:, :self.config.sequence_length] != 0).sum(1)
-        last_output = output[torch.arange(output.size(0)), lengths - 1]
-        return last_output
 
     def forward(self, x):
 

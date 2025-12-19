@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hidden_size", type=int, default=128, help="Hidden size of the LSTM model")
-    parser.add_argument("--num_layers", type=int, default=2, help="Number of layers in the LSTM model")
+    parser.add_argument("--num_layers", type=int, default=1, help="Number of layers in the LSTM model")
     parser.add_argument("--dropout_rate", type=float, default=0.1, help="Dropout rate for the LSTM model")
     parser.add_argument("--num_epochs", type=int, default=50, help="Number of epochs for training")
     parser.add_argument("--num_epochs_nesy", type=int, default=50, help="Number of epochs for training LTN model")
@@ -26,6 +26,7 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="bpi12", help="Dataset to use")
     parser.add_argument("--backbone", type=str, default="lstm", help="Backbone model type: lstm or transformer")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate for the optimizer")
+    parser.add_argument("--case_id", type=str, default="case:concept:name", help="Case ID column name in the dataset")
 
     return parser.parse_args()
 
@@ -39,12 +40,14 @@ if __name__ == "__main__":
 
     print("INFO: Reading dataset...")
     data = pd.read_pickle('data/bpi12.pkl')
+    # data = pd.read_csv('data/bpi12.csv')
     print("INFO: Dataset read successfully!")
     print("INFO: Preprocessing dataset...")
-    if args.dataset == "bpi12":
+    if args.dataset == "bpi12" or args.dataset == "bpi12_kappel":
         from data import preprocess_bpi12
-        (X_train, y_train, X_val, y_val, X_test, y_test, seq_len, feature_names), vocab_sizes, scalers = preprocess_bpi12.preprocess_eventlog(data, args.seed)
+        (X_train, y_train, X_val, y_val, X_test, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes = preprocess_bpi12.preprocess_eventlog(data, args.dataset, args.case_id)
     print("INFO: Preprocessing completed!")
+    print("INFO: Feature names: ", feature_names)
     config = ModelConfig(
         hidden_size=args.hidden_size,
         num_layers=args.num_layers,
@@ -57,31 +60,19 @@ if __name__ == "__main__":
     train_dataset = NeSyDataset(X_train, y_train)
     val_dataset = NeSyDataset(X_val, y_val)
     test_dataset = NeSyDataset(X_test, y_test)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-
-    # Knowledge Theory
-    Forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(p=2), quantifier="f")
-    Not = ltn.Connective(ltn.fuzzy_ops.NotStandard())
-    And = ltn.Connective(ltn.fuzzy_ops.AndProd())
-    Or = ltn.Connective(ltn.fuzzy_ops.OrProbSum())
-    Implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
-    SatAgg = ltn.fuzzy_ops.SatAgg()
-
-    # Define LTN model
-    lstm = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
-    criterion = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(lstm.parameters(), lr=args.learning_rate)
-    # P = ltn.Predicate(lstm)
-    # params = list(P.parameters())
-    # optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+    train_loader = DataLoader(train_dataset, batch_size=12, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=12, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=12, shuffle=False)
 
     if args.train_vanilla:
+        lstm = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
+        criterion = torch.nn.MSELoss()
+        optimizer = torch.optim.Adam(lstm.parameters(), lr=args.learning_rate)
         print("INFO: Starting training vanilla baseline...")
-        for epoch in range(args.num_epochs):
+        for epoch in range(0, args.num_epochs):
             lstm.train()
             total_loss = 0.0
+            total_validation_loss = 0.0
             for batch_idx, (x, y) in enumerate(train_loader):
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
@@ -91,22 +82,61 @@ if __name__ == "__main__":
                 optimizer.step()
                 total_loss += loss.item()
             avg_loss = total_loss / len(train_loader)
-            print(f"INFO: Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
+            lstm.eval()
+            with torch.no_grad():
+                for batch_idx, (x, y) in enumerate(val_loader):
+                    x, y = x.to(device), y.to(device)
+                    outputs = lstm(x)
+                    val_loss = criterion(outputs.squeeze(), y)
+                    total_validation_loss += val_loss.item()
+            avg_val_loss = total_validation_loss / len(val_loader)
+            print(f"INFO: Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+            # Early stopping check
+            if epoch == 0:
+                best_val_loss = avg_val_loss
+                patience_counter = 0
+                torch.save(lstm.state_dict(), 'best_model.pt')
+            else:
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    patience_counter = 0
+                    torch.save(lstm.state_dict(), 'best_model.pt')
+                else:
+                    patience_counter += 1
+                    if patience_counter >= 10:
+                        print(f"INFO: Early stopping triggered at epoch {epoch+1}")
+                        lstm.load_state_dict(torch.load('best_model.pt'))
+                        break
         print("INFO: Training completed!")
         print("INFO: Starting evaluation on test set...")
+        # lstm.load_state_dict(torch.load('best_model.pt'))
         lstm.eval()
         maes = []
         rmses = []
+        predictions = []
+        gt_labels = []
         with torch.no_grad():
             for batch_idx, (x, y) in enumerate(test_loader):
                 x, y = x.to(device), y.to(device)
                 y_pred = lstm(x)
-                y_pred = scalers['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
+                y_pred = scalers_test['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
                 y_pred = np.maximum(y_pred, 0)
-                y_true = scalers['remaining_time'].inverse_transform(y.cpu().numpy().reshape(-1, 1))
-                maes.append(mean_absolute_error(y_true, y_pred))
-                rmses.append(root_mean_squared_error(y_true, y_pred))
-        mae = sum(maes) / len(maes)
-        rmse = sum(rmses) / len(rmses)
+                predictions.extend(y_pred.flatten().tolist())
+                y_true = scalers_test['remaining_time'].inverse_transform(y.cpu().numpy().reshape(-1, 1))
+                gt_labels.extend(y_true.flatten().tolist())
         print("INFO: Evaluation completed!")
-        print(f"INFO: Test MAE: {mae:.4f}, Test RMSE: {rmse:.4f}")
+        print(f"INFO: Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, Test RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}")
+
+    if args.train_nesy:
+        Forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(p=2), quantifier="f")
+        Not = ltn.Connective(ltn.fuzzy_ops.NotStandard())
+        And = ltn.Connective(ltn.fuzzy_ops.AndProd())
+        Or = ltn.Connective(ltn.fuzzy_ops.OrProbSum())
+        Implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
+        SatAgg = ltn.fuzzy_ops.SatAgg()
+        lstm = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
+        P = ltn.Predicate(lstm)
+        params = list(P.parameters())
+        optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+        print("INFO: Starting training LTN model...")
+        
