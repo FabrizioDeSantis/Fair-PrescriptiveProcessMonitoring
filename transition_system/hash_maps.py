@@ -28,8 +28,16 @@ def list_str(string=str):
 class HashTable:
 
     # Create empty bucket list of given size
-    def __init__(self, size):
+    def __init__(self, size, abstraction="sequence"):
+        """
+        Initialize hash table.
+        
+        Args:
+            size: Number of buckets in the hash table
+            abstraction: "sequence" (order matters) or "set" (order doesn't matter)
+        """
         self.size = size
+        self.abstraction = abstraction
         self.hash_table = self.create_buckets()
 
     def create_buckets(self):
@@ -37,6 +45,18 @@ class HashTable:
 
     # Insert values into hash map
     def set_val(self, key, val):
+        # Normalize key based on abstraction mode
+        if isinstance(key, list):
+            if self.abstraction == "set":
+                # Sort the list to make order irrelevant
+                key = str_list(sorted(key))
+            else:  # abstraction == "sequence"
+                key = str_list(key)
+        elif isinstance(key, str):
+            # If it's already a string, keep it as is
+            pass
+        else:
+            key = str(key)
 
         # Get the index from the key
         # using hash function
@@ -65,9 +85,18 @@ class HashTable:
 
     # Return searched value with specific key
     def get_val(self, key):
-
-        if type(key) == list:
-            key = str_list(key)
+        # Normalize key based on abstraction mode
+        if isinstance(key, list):
+            if self.abstraction == "set":
+                # Sort the list to make order irrelevant
+                key = str_list(sorted(key))
+            else:  # abstraction == "sequence"
+                key = str_list(key)
+        elif isinstance(key, str):
+            # If it's already a string, keep it as is
+            pass
+        else:
+            key = str(key)
 
         # Get the index from the key using
         # hash function
@@ -96,6 +125,18 @@ class HashTable:
 
     # Remove a value with specific key
     def delete_val(self, key):
+        # Normalize key based on abstraction mode
+        if isinstance(key, list):
+            if self.abstraction == "set":
+                # Sort the list to make order irrelevant
+                key = str_list(sorted(key))
+            else:  # abstraction == "sequence"
+                key = str_list(key)
+        elif isinstance(key, str):
+            # If it's already a string, keep it as is
+            pass
+        else:
+            key = str(key)
 
         # Get the index from the key using
         # hash function
@@ -148,7 +189,21 @@ def frequency_table(X_train, case_id_name=str, activity_name=str, thrs=.2):
     return freq_dict
 
 
-def fill_hashmap(X_train, case_id_name=str, activity_name=str, thrs=.2):
+def fill_hashmap(X_train, case_id_name=str, activity_name=str, thrs=.2, abstraction=False, k=None):
+    """
+    Create a transition system hash map from event log data.
+    
+    Args:
+        X_train: DataFrame with event log data
+        case_id_name: Name of the case ID column
+        activity_name: Name of the activity column
+        thrs: Threshold for frequency filtering (0 = no filtering)
+        abstraction: "sequence" (order matters) or "set" (order doesn't matter)
+        k: If not None, use only the last k activities as key. If None, use full sequence.
+    
+    Returns:
+        HashTable object representing the transition system
+    """
     if thrs == .2:
         print('Creating hash-map following Pareto\'s principle')
         traces_selected = frequency_table(X_train, case_id_name=case_id_name, activity_name=activity_name, thrs=thrs)
@@ -163,7 +218,20 @@ def fill_hashmap(X_train, case_id_name=str, activity_name=str, thrs=.2):
     # Create an empty hash map, large as the maximum number of traces possible (TO EDIT)
     idx_list = X_train[case_id_name].unique()
     max_traces = len(idx_list)
-    traces_hash = HashTable(max_traces)
+    
+    # Set abstraction mode: "sequence" (default) or "set"
+    if abstraction == "set":
+        abstraction_mode = "set"
+    else:
+        abstraction_mode = "sequence"
+    
+    # Print k parameter info
+    if k is not None:
+        print(f'Using last {k} activities as key for transition system')
+    else:
+        print('Using full sequence as key for transition system')
+    
+    traces_hash = HashTable(max_traces, abstraction=abstraction_mode)
     for trace_idx in idx_list:
 
         trace = X_train[X_train[case_id_name] == trace_idx].reset_index(drop=True)
@@ -174,12 +242,21 @@ def fill_hashmap(X_train, case_id_name=str, activity_name=str, thrs=.2):
 
                 curr_act = trace[activity_name][idx]
                 if idx > 0:
-                    if traces_hash.get_val(str_list(prev_trace)) == 'No record found':
-                        traces_hash.set_val(str_list(prev_trace), [curr_act])
+                    # Determine the key to use: full sequence or last k activities
+                    if k is not None:
+                        # Use only the last k activities
+                        key_trace = prev_trace[-k:] if len(prev_trace) >= k else prev_trace
+                    else:
+                        # Use full sequence
+                        key_trace = prev_trace
+                    
+                    # Pass list directly - get_val/set_val will handle abstraction
+                    if traces_hash.get_val(key_trace) == 'No record found':
+                        traces_hash.set_val(key_trace, [curr_act])
 
                     else:
-                        if curr_act not in traces_hash.get_val(str_list(prev_trace)):
-                            traces_hash.get_val(str_list(prev_trace)).append(curr_act)
+                        if curr_act not in traces_hash.get_val(key_trace):
+                            traces_hash.get_val(key_trace).append(curr_act)
 
                 prev_trace.append(curr_act)
 

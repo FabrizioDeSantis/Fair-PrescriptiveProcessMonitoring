@@ -8,15 +8,25 @@ random.seed(1618)
 # Converter
 import pm4py
 
-#My functions (only IO needed for first block)
+#My functions for reading the data
 from IO import read, folders, create_folders
 
-experiment_name = "bpi12_kappel"
+# Import functions needed for subsequent blocks
+import hash_maps
+import utils
 
-# Read the log with the IO.read function
-# Try CSV first, then pickle if CSV doesn't exist
-data_path_csv = f'../data/{experiment_name}.csv'
-data_path_pkl = f'../data/{experiment_name}.pkl'
+# Set it as the main folder
+working_dir = '/home/padela/Desktop/Fair-PrescriptiveProcessMonitoring'
+os.chdir(working_dir)
+ 
+experiment_name = "bpi12_kappel"
+abstraction_mode = "set"  # Can be "sequence" or "set"
+k = 2  # If not None, use only the last k activities as key. If None, use full sequence.
+
+# Try CSV first, then pickle if CSV doesn't exist, then .xes if none of the above exist
+data_path_csv = f'data/{experiment_name}.csv'
+data_path_pkl = f'data/{experiment_name}.pkl'
+data_path_xes = f'data/{experiment_name}.xes'
 
 if os.path.exists(data_path_csv):
     log = read(data_path_csv)
@@ -24,13 +34,15 @@ if os.path.exists(data_path_csv):
 elif os.path.exists(data_path_pkl):
     log = read(data_path_pkl)
     print(f"Successfully read pickle file: {data_path_pkl}")
+elif os.path.exists(data_path_xes):
+    log = pm4py.convert_to_event_log(data_path_xes)
+    print(f"Successfully read xes file: {data_path_xes}")
 else:
-    raise FileNotFoundError(f"Neither {data_path_csv} nor {data_path_pkl} found")
+    raise FileNotFoundError(f"Neither {data_path_csv} nor {data_path_pkl} nor {data_path_xes} found")
 
 # Keep original DataFrame for transition system processing
 X_train = log.copy()
 
-# Define column names for the transition system
 # Check what columns we have and set appropriate names
 if 'case_id' in X_train.columns:
     case_id_name = 'case_id'
@@ -48,7 +60,6 @@ else:
 
 print(f"Using case_id_name: {case_id_name}, activity_name: {activity_name}")
 
-# Check if we need to rename columns for pm4py compatibility
 # pm4py expects 'case:concept:name' but the data might have 'case_id'
 log_pm4py = log.copy()
 if 'case_id' in log_pm4py.columns and 'case:concept:name' not in log_pm4py.columns:
@@ -62,11 +73,6 @@ if 'activity' in log_pm4py.columns and 'concept:name' not in log_pm4py.columns:
 
 log = pm4py.convert_to_event_log(log_pm4py)
 print(f"Successfully converted to event log. Number of traces: {len(log)}")
-
-#%%
-# Import functions needed for subsequent blocks
-import hash_maps
-import utils
 
 # # Get available resources from the event log or DataFrame
 # if 'org:resource' in X_train.columns:
@@ -96,11 +102,26 @@ print(f"Found {len(activity_list)} unique activities")
 #             act_role_dict[act] = list(roles[idx][1].keys())
 # """ Fin qui """
 
-# QUESTO È IL TRANSITION SYSTEM
-traces_hash = hash_maps.fill_hashmap(X_train=X_train, case_id_name=case_id_name, activity_name=activity_name, thrs=0)
+# This is the transition system
+traces_hash = hash_maps.fill_hashmap(X_train=X_train, case_id_name=case_id_name, activity_name=activity_name, 
+                                        thrs=0, abstraction=abstraction_mode, k=k)
+# Note: The abstraction mode is stored in traces_hash.abstraction
 # traces_hash = pickle.load(open('traces_hash.pkl', 'rb'))
 
 print('Hash-map created')
+# Create filename with abstraction and k parameters
+if k is not None:
+    filename = f'transition_system/variables/{experiment_name}/transition_system_{abstraction_mode}_k{k}.pkl'
+else:
+    filename = f'transition_system/variables/{experiment_name}/transition_system_{abstraction_mode}.pkl'
+pickle.dump(traces_hash, open(filename, 'wb'))
+print(f'Abstraction mode: {abstraction_mode}')
+if k is not None:
+    print(f'k parameter: {k} (using last {k} activities as key)')
+else:
+    print('k parameter: None (using full sequence as key)')
+print(f'Transition system saved to: {filename}')
+
 # print('Analyze variables...')
 # quantitative_vars, qualitative_trace_vars, qualitative_vars = utils.variable_type_analysis(X_train, case_id_name,
 #                                                                                            activity_name)
@@ -112,7 +133,8 @@ print('Hash-map created')
 
 # pickle.dump(quantitative_vars, open(f'{variables_dir}/quantitative_vars.pkl', 'wb'))
 # pickle.dump(qualitative_vars, open(f'{variables_dir}/qualitative_vars.pkl', 'wb'))
-# pickle.dump(traces_hash, open(f'{variables_dir}/traces_hash.pkl', 'wb'))
+# Include abstraction mode in filename (automatically retrieved from traces_hash object)
+
 # print(f"Saved results to {variables_dir}/")
 
 # """ Implementazione per raccomdandare risorse"""
