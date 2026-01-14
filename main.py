@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 import logging
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from data.utils import compute_cf_mse
+from utils import recommend_act_loader, compute_cf_fairness
+from data.utils import compute_average_execution_time
 
 import argparse
 
@@ -26,16 +28,17 @@ def get_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--dataset", type=str, default="bpi12", help="Dataset to use")
     parser.add_argument("--backbone", type=str, default="lstm", help="Backbone model type: lstm or transformer")
-    parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate for the optimizer")
-    parser.add_argument("--case_id", type=str, default="case:concept:name", help="Case ID column name in the dataset")
+    parser.add_argument("--learning_rate", type=float, default=0.0001, help="Learning rate for the optimizer")
+    parser.add_argument("--abstraction_mode", type=str, default="sequence", help="Abstraction mode for transition system")
+    parser.add_argument("--k", type=int, default=1, help="Parameter k for transition system")
 
     return parser.parse_args()
 
 if __name__ == "__main__":
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(filename='output.log', level=logging.INFO)
+    # logger = logging.getLogger(__name__)
+    # logging.basicConfig(filename='output.log', level=logging.INFO)
 
     args = get_args()
 
@@ -45,9 +48,28 @@ if __name__ == "__main__":
     print("INFO: Preprocessing dataset...")
     if args.dataset == "bpi12" or args.dataset == "bpi12_kappel":
         from data import preprocess_bpi12
-        (X_train, X_train_cf, y_train, X_val, X_val_cf, y_val, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes = preprocess_bpi12.preprocess_eventlog(data, args.dataset, args.case_id, "gender", ["case:AMOUNT_REQ"])
+        (X_train, X_train_cf, y_train, X_val, X_val_cf, y_val, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, "gender", ["case:AMOUNT_REQ"], args.abstraction_mode)
     print("INFO: Preprocessing completed.")
+
+    if 'case_id' in data.columns:
+        case_id_name = 'case_id'
+    elif 'case:concept:name' in data.columns:
+        case_id_name = 'case:concept:name'
+    else:
+        raise ValueError("Could not find case ID column. Available columns: " + str(list(data.columns)))
+
+    if 'activity' in data.columns:
+        activity_name = 'activity'
+    elif 'concept:name' in data.columns:
+        activity_name = 'concept:name'
+    else:
+        raise ValueError("Could not find activity column. Available columns: " + str(list(data.columns)))
+    
     print("INFO: Feature names: ", feature_names)
+
+    avg_exec_times = compute_average_execution_time(data, case_col=case_id_name, activity_col=activity_name, timestamp_col="time:timestamp")
+    print("INFO: Average execution times computed.")
+
     config = ModelConfig(
         hidden_size=args.hidden_size,
         num_layers=args.num_layers,
@@ -57,12 +79,13 @@ if __name__ == "__main__":
         sequence_length = seq_len,
         seed = args.seed
     )
+
     train_dataset = CounterfactualDataset(X_train, X_train_cf, y_train)
     val_dataset = CounterfactualDataset(X_val, X_val_cf, y_val)
     test_dataset = CounterfactualDataset(X_test, X_test_cf, y_test)
-    train_loader = DataLoader(train_dataset, batch_size=12, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=12, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=12, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
     if args.train_vanilla:
         lstm = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
@@ -128,10 +151,13 @@ if __name__ == "__main__":
                 y_cf_pred = scalers_test['remaining_time'].inverse_transform(y_cf_pred.cpu().numpy().reshape(-1, 1))
                 y_cf_pred = np.maximum(y_cf_pred, 0)
                 predictions_cf.extend(y_cf_pred.flatten().tolist())
-
         print("INFO: Evaluation completed!")
         print(f"INFO: Baseline Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
-
+        print("INFO: Generating recommendations and evaluating counterfactual fairness...")
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, lstm, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device)
+        cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
+        print(f"INFO: Baseline Counterfactual Fairness: {cf_fairness:.4f}")
+    
     if args.train_nesy:
         # LTN Knowledge Base
         Forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(p=2), quantifier="f")
@@ -140,12 +166,12 @@ if __name__ == "__main__":
         Or = ltn.Connective(ltn.fuzzy_ops.OrProbSum())
         Implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
         alpha = 0.05
-        Eq = ltn.Predicate(func = lambda u, v: torch.exp(-alpha * torch.sqrt(torch.sum(torch.square(u - v), dim=1))))
+        Eq = ltn.Predicate(func = lambda u, v: torch.exp(-alpha * torch.sqrt(torch.sum(torch.square(u - v), dim=1) + 1e-10 )))
         SatAgg = ltn.fuzzy_ops.SatAgg()
         model = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
         f = ltn.Function(model)
         params = list(f.parameters())
-        optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+        optimizer = torch.optim.Adam(params, lr=args.learning_rate, weight_decay=1e-5)
         def compute_sat_level(loader):
             mean_sat = 0
             for x_data, x_cf_data, y_data in loader:
@@ -203,7 +229,7 @@ if __name__ == "__main__":
             avg_loss = total_loss / len(train_loader)
             if epoch % 5 == 0:
                 mae, rmse = compute_mae_rmse(test_loader)
-                print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Sat: {compute_sat_level(train_loader):.4f}, Val Sat: {compute_sat_level(val_loader)}, Test Sat: {compute_sat_level(val_loader):.4f}")
+                print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Sat: {compute_sat_level(train_loader):.4f}, Val Sat: {compute_sat_level(val_loader):.4f}, Test Sat: {compute_sat_level(val_loader):.4f}")
         print("INFO: Starting evaluation on test set...")
         model.eval()
         predictions = []
@@ -224,6 +250,10 @@ if __name__ == "__main__":
                 predictions_cf.extend(y_cf_pred.flatten().tolist())
         print("INFO: Evaluation completed!")
         print(f"INFO: LTN Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
+        print("INFO: Generating recommendations and evaluating counterfactual fairness...")
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device)
+        cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
+        print(f"INFO: LTN Counterfactual Fairness: {cf_fairness:.4f}")
         print("INFO: Training with regression and fairness axioms...")
         for epoch in range(0, args.num_epochs_nesy):
             model.train()
@@ -265,3 +295,7 @@ if __name__ == "__main__":
                 predictions_cf.extend(y_cf_pred.flatten().tolist())
         print("INFO: Evaluation completed!")
         print(f"INFO: LTN + Fairness Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
+        print("INFO: Generating recommendations and evaluating counterfactual fairness...")
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device)
+        cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
+        print(f"INFO: LTN + Fairness Counterfactual Fairness: {cf_fairness:.4f}")

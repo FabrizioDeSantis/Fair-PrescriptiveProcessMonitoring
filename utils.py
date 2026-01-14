@@ -1,0 +1,81 @@
+import torch
+
+def compute_next_temporal_features(prev_day_of_week, prev_time_of_day, avg_execution_time):
+    prev_time_seconds = prev_time_of_day * 86400
+    new_time_seconds = prev_time_seconds + avg_execution_time
+    days_passed = int(new_time_seconds // 86400)
+    new_time_seconds_in_day = new_time_seconds % 86400
+    new_day_of_week = (prev_day_of_week + days_passed) % 7
+    new_time_of_day = new_time_seconds_in_day / 86400
+    time_delta = avg_execution_time
+    return {
+        'day_of_week': new_day_of_week,
+        'time_of_day': new_time_of_day,
+        'time_delta': time_delta
+    }
+
+def create_new_feat_vec(original_feat_vec, cf_feat_vec, new_value, index, seq_len, features, avg_execution_time, scalers):
+    new_feat_vec = original_feat_vec.clone()
+    new_feat_vec[index] = new_value
+    new_cf_feat_vec = cf_feat_vec.clone()
+    new_cf_feat_vec[index] = new_value
+    new_temp_features = compute_next_temporal_features(
+        prev_day_of_week=original_feat_vec[(features.index('day_of_week') * seq_len) + index - 1].item(),
+        prev_time_of_day=scalers['time_of_day'].inverse_transform([[original_feat_vec[(features.index('time_of_day') * seq_len) + index - 1].item()]])[0][0],
+        avg_execution_time=avg_execution_time
+    )
+
+    for feature in features:
+        if feature != 'activity' and feature != 'org:resource' and feature not in ['day_of_week', 'time_of_day', 'time_delta']:
+            index_feat = features.index(feature) * seq_len + index
+            new_feat_vec[index_feat] = original_feat_vec[index_feat-1]
+            new_cf_feat_vec[index_feat] = cf_feat_vec[index_feat-1]
+        elif feature == 'day_of_week':
+            index_feat = features.index('day_of_week') * seq_len + index
+            new_feat_vec[index_feat] = new_temp_features['day_of_week']
+            new_cf_feat_vec[index_feat] = new_temp_features['day_of_week']
+        elif feature == 'time_of_day':
+            index_feat = features.index('time_of_day') * seq_len + index
+            scaled_time_of_day = scalers['time_of_day'].transform([[new_temp_features['time_of_day']]])[0][0]
+            new_feat_vec[index_feat] = scaled_time_of_day
+            new_cf_feat_vec[index_feat] = scaled_time_of_day
+        elif feature == 'time_delta':
+            index_feat = features.index('time_delta') * seq_len + index
+            scaled_time_delta = scalers['time_delta'].transform([[new_temp_features['time_delta']]])[0][0]
+            new_feat_vec[index_feat] = scaled_time_delta
+            new_cf_feat_vec[index_feat] = scaled_time_delta
+        
+    return new_feat_vec, new_cf_feat_vec
+
+def recommend_act_loader(test_loader, ts, model, activity_mapping, seq_len, features, avg_exec_time_dict, scalers, device):
+    act_kpi_og_final_results = []
+    act_kpi_cf_final_results = []
+    with torch.no_grad():
+        for x, x_cf, y in test_loader:
+            for i in range(len(x)):
+                index = (x[i][:seq_len] == 0).nonzero(as_tuple=True)[0]
+                prefix = [activity_mapping[int(act)] for act in x[i][:seq_len][x[i][:seq_len] != 0].tolist()]
+                next_acts = ts.get_val(prefix)
+                act_kpi_list = []
+                act_kpi_list_cf = []
+                for act in next_acts:
+                    act_int = [k for k, v in activity_mapping.items() if v == act][0]
+                    if len(index) > 0:
+                        new_x_og, new_x_cf = create_new_feat_vec(x[i], x_cf[i], act_int, index[0], seq_len, features, avg_exec_time_dict.get(act, 0), scalers)
+                        prediction_og = model(new_x_og.unsqueeze(0).to(device))
+                        act_kpi_list.append((act, prediction_og.item()))
+                        prediction_cf = model(new_x_cf.unsqueeze(0).to(device))
+                        act_kpi_list_cf.append((act, prediction_cf.item()))
+                act_kpi_list.sort(key=lambda x: x[1])
+                act_kpi_list_cf.sort(key=lambda x: x[1])
+                act_kpi_og_final_results.append(act_kpi_list[0])
+                act_kpi_cf_final_results.append(act_kpi_list_cf[0])
+    return act_kpi_og_final_results, act_kpi_cf_final_results
+
+def compute_cf_fairness(act_kpi_list, act_kpi_list_cf):
+    counterfactual_fairness = 0
+    for i in range(len(act_kpi_list)):
+        if act_kpi_list[i][0] == act_kpi_list_cf[i][0]:
+            counterfactual_fairness += 1
+    counterfactual_fairness = counterfactual_fairness / len(act_kpi_list)
+    return counterfactual_fairness
