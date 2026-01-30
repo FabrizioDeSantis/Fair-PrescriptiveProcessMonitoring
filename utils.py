@@ -47,11 +47,11 @@ def create_new_feat_vec(original_feat_vec, cf_feat_vec, new_value, index, seq_le
         
     return new_feat_vec, new_cf_feat_vec
 
-def recommend_act_loader(test_loader, ts, model, activity_mapping, seq_len, features, avg_exec_time_dict, scalers, device):
+def recommend_act_loader(test_loader, ts, model, activity_mapping, seq_len, features, avg_exec_time_dict, scalers, device, dataset_name, model_name, save_to_file=False):
     act_kpi_og_final_results = []
     act_kpi_cf_final_results = []
     with torch.no_grad():
-        for x, x_cf, y in test_loader:
+        for x, x_cf, y, case_id in test_loader:
             for i in range(len(x)):
                 index = (x[i][:seq_len] == 0).nonzero(as_tuple=True)[0]
                 prefix = [activity_mapping[int(act)] for act in x[i][:seq_len][x[i][:seq_len] != 0].tolist()]
@@ -63,19 +63,29 @@ def recommend_act_loader(test_loader, ts, model, activity_mapping, seq_len, feat
                     if len(index) > 0:
                         new_x_og, new_x_cf = create_new_feat_vec(x[i], x_cf[i], act_int, index[0], seq_len, features, avg_exec_time_dict.get(act, 0), scalers)
                         prediction_og = model(new_x_og.unsqueeze(0).to(device))
-                        act_kpi_list.append((act, prediction_og.item()))
+                        act_kpi_list.append((case_id[i].item(), act, max(0, scalers['remaining_time'].inverse_transform([[prediction_og.item()]])[0][0])))
                         prediction_cf = model(new_x_cf.unsqueeze(0).to(device))
-                        act_kpi_list_cf.append((act, prediction_cf.item()))
-                act_kpi_list.sort(key=lambda x: x[1])
-                act_kpi_list_cf.sort(key=lambda x: x[1])
+                        act_kpi_list_cf.append((case_id[i].item(), act, max(0, scalers['remaining_time'].inverse_transform([[prediction_cf.item()]])[0][0])))
+                act_kpi_list.sort(key=lambda x: x[2])
+                act_kpi_list_cf.sort(key=lambda x: x[2])
                 act_kpi_og_final_results.append(act_kpi_list[0])
                 act_kpi_cf_final_results.append(act_kpi_list_cf[0])
+    if save_to_file:
+        with open(f"{dataset_name}_{model_name}_recommended_activities.csv", "w") as f:
+            f.write("case:concept:name,concept:name,kpi\n")
+            for og in act_kpi_og_final_results:
+                f.write(f"{og[0]},{og[1]},{og[2]}\n")
+        with open(f"{dataset_name}_{model_name}_recommended_activities_counterfactual.csv", "w") as f:
+            f.write("case:concept:name,concept:name,kpi\n")
+            for cf in act_kpi_cf_final_results:
+                f.write(f"{cf[0]},{cf[1]},{cf[2]}\n")
+            
     return act_kpi_og_final_results, act_kpi_cf_final_results
 
 def compute_cf_fairness(act_kpi_list, act_kpi_list_cf):
     counterfactual_fairness = 0
     for i in range(len(act_kpi_list)):
-        if act_kpi_list[i][0] == act_kpi_list_cf[i][0]:
+        if act_kpi_list[i][1] == act_kpi_list_cf[i][1]:
             counterfactual_fairness += 1
     counterfactual_fairness = counterfactual_fairness / len(act_kpi_list)
     return counterfactual_fairness
