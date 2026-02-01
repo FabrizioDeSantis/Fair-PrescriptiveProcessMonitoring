@@ -1,0 +1,8 @@
+INFO: Baseline Test MAE: 13.0344, RMSE: 14.1168, CF MSE: 6.6406
+INFO: Baseline Counterfactual Fairness: 0.9870
+
+INFO: LTN Test MAE: 12.8615, RMSE: 13.9233, CF MSE: 6.4316
+INFO: LTN Counterfactual Fairness: 0.9778
+
+INFO: LTN + Fairness Test MAE: 12.8183, RMSE: 13.8144, CF MSE: 0.3503
+INFO: LTN + Fairness Counterfactual Fairness: 0.9969
