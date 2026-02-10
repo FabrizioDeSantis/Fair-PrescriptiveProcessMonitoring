@@ -2,6 +2,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import random
+import pickle as pkl
 from counterfactuals import generate_counterfactual_event_log
 from data.utils import remaining_time_helper_func
 from transition_system import hash_maps
@@ -163,6 +164,10 @@ def create_prefixes(data, data_counterfactual, case_id_column, train_ids, val_id
         case_ids_test.append(id_value)
 
     feature_names = ngram_df.columns.tolist()
+
+    pkl.dump(case_ids_test, open(f'experiments/bpi12_kappel/running_idx/test_ids.pkl', 'wb'))
+    pkl.dump(prefixes_test, open(f'experiments/bpi12_kappel/running_idx/prefixes_test.pkl', 'wb'))
+    pkl.dump(train_ids, open(f'experiments/bpi12_kappel/running_idx/train_ids.pkl', 'wb')) 
 
     return case_ids_train, prefixes_training, prefixes_counterfactual_training, labels_training, case_ids_val, prefixes_val, prefixes_counterfactual_val, labels_val, case_ids_test, prefixes_test, prefixes_counterfactual_test, labels_test, max_seq_len, feature_names, scalers_training, scalers_val, scalers_test
 

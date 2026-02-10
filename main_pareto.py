@@ -38,12 +38,13 @@ def get_args():
 
 if __name__ == "__main__":
 
+   
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     # logger = logging.getLogger(__name__)
     # logging.basicConfig(filename='output.log', level=logging.INFO)
 
     args = get_args()
-
+    print('Args are', args)
     print("INFO: Reading dataset...")
     data = pd.read_pickle('data/bpi12.pkl')
 

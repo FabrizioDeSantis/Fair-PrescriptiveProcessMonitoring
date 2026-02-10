@@ -1,4 +1,49 @@
+import pickle
+from pathlib import Path
+
+import pandas as pd
 import torch
+
+
+def load_running_log(running_idx_dir="experiments/bpi12_kappel/running_idx", data_dir="data"):
+    """
+    Load prefixes_test and test_ids from running_idx, load bpi12 from data,
+    then build a dataframe of prefix rows: for each test trace, the first 'a' rows
+    (a = number of non-zero elements in the first entry of that prefix). Returns
+    the concatenated running log as a DataFrame.
+    """
+    base = Path(running_idx_dir)
+    with open(base / "prefixes_test.pkl", "rb") as f:
+        prefixes_test = pickle.load(f)
+    with open(base / "test_ids.pkl", "rb") as f:
+        test_ids = pickle.load(f)
+    with open(Path(data_dir) / "bpi12.pkl", "rb") as f:
+        bpi12 = pickle.load(f)
+
+    case_id_col = "case_id" if "case_id" in bpi12.columns else "case:concept:name"
+    case_ids = bpi12[case_id_col].astype(int) if bpi12[case_id_col].dtype == object else bpi12[case_id_col]
+
+    all_trace_rows = []
+    for n in range(len(test_ids)):
+        trace_id = test_ids[n]
+        first_entry = prefixes_test[n][0]
+        a = sum(1 for x in first_entry if x != 0)
+        trace_rows = bpi12[case_ids == trace_id].head(a)
+        all_trace_rows.append(trace_rows)
+
+    return pd.concat(all_trace_rows, ignore_index=True)
+
+def add_start_timestamp(df):
+    """
+    Adds a column 'start:timestamp' to the dataframe.
+    For the first event in each trace (with smallest 'time:timestamp' for each 'case_id'),
+    the value is 0. For the rest, it is the value of the previous event's 'time:timestamp' within the trace.
+    """
+    df_sorted = df.sort_values(['case_id', 'time:timestamp'])
+    df_sorted['start:timestamp'] = df_sorted.groupby('case_id')['time:timestamp'].shift(1)
+    df_sorted['start:timestamp'] = df_sorted['start:timestamp'].fillna(df_sorted['time:timestamp'])
+    return df_sorted
+
 
 def compute_next_temporal_features(prev_day_of_week, prev_time_of_day, avg_execution_time):
     prev_time_seconds = prev_time_of_day * 86400
@@ -71,11 +116,11 @@ def recommend_act_loader(test_loader, ts, model, activity_mapping, seq_len, feat
                 act_kpi_og_final_results.append(act_kpi_list[0])
                 act_kpi_cf_final_results.append(act_kpi_list_cf[0])
     if save_to_file:
-        with open(f"{dataset_name}_{model_name}_recommended_activities.csv", "w") as f:
+        with open(f"experiments/{dataset_name}/{model_name}_recommended_activities.csv", "w") as f:
             f.write("case:concept:name,concept:name,kpi\n")
             for og in act_kpi_og_final_results:
                 f.write(f"{og[0]},{og[1]},{og[2]}\n")
-        with open(f"{dataset_name}_{model_name}_recommended_activities_counterfactual.csv", "w") as f:
+        with open(f"experiments/{dataset_name}/{model_name}_recommended_activities_counterfactual.csv", "w") as f:
             f.write("case:concept:name,concept:name,kpi\n")
             for cf in act_kpi_cf_final_results:
                 f.write(f"{cf[0]},{cf[1]},{cf[2]}\n")
@@ -89,3 +134,48 @@ def compute_cf_fairness(act_kpi_list, act_kpi_list_cf):
             counterfactual_fairness += 1
     counterfactual_fairness = counterfactual_fairness / len(act_kpi_list)
     return counterfactual_fairness
+
+def compute_activity_resource_probabilities(
+    event_log,
+    activity_col='concept:name',
+    resource_col='org:resource'):
+    """
+    Compute resource probability distributions per activity.
+
+    Returns
+    -------
+    dict
+        Mapping:
+        {
+            <activity>: [(<resource_1>, <prob_1>), (<resource_2>, <prob_2>), ...]
+        }
+    """
+    if activity_col not in event_log.columns:
+        raise ValueError(f"Column '{activity_col}' not found in event_log.")
+    if resource_col not in event_log.columns:
+        raise ValueError(f"Column '{resource_col}' not found in event_log.")
+
+    df = event_log[[activity_col, resource_col]].dropna()
+    if df.empty:
+        return {}
+
+    # Frequency table and normalized probabilities per activity.
+    counts = (
+        df.groupby([activity_col, resource_col])
+        .size()
+        .rename('count')
+        .reset_index()
+    )
+    counts['probability'] = counts.groupby(activity_col)['count'].transform(
+        lambda x: x / x.sum()
+    )
+
+    distributions = {}
+    for activity, group in counts.groupby(activity_col):
+        group_sorted = group.sort_values('probability', ascending=False)
+        distributions[activity] = [
+            (row[resource_col], float(row['probability']))
+            for _, row in group_sorted.iterrows()
+        ]
+
+    return distributions
