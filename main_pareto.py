@@ -3,7 +3,7 @@ from model.lstm import LSTMModel
 import pandas as pd
 import numpy as np
 import torch
-from data.dataset import CounterfactualDataset, ModelConfig
+from data.dataset import CounterfactualDataset, ModelConfig, StandardDataset
 from torch.utils.data import DataLoader
 import logging
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
@@ -68,7 +68,19 @@ if __name__ == "__main__":
     print("INFO: Preprocessing dataset...")
     if args.dataset == "bpi12" or args.dataset == "bpi12_kappel":
         from data import preprocess_bpi12
-        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, "gender", ["case:AMOUNT_REQ"], args.abstraction_mode)
+        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, ["gender"], args.abstraction_mode)
+        y_train_og = y_train[0]
+        y_train_cf = y_train[1]
+        y_val_og = y_val[0]
+        y_val_cf = y_val[1]
+        y_test_og = y_test[0]
+        y_test_cf = y_test[1]
+        case_ids_train_og = case_ids_train[0]
+        case_ids_train_cf = case_ids_train[1]
+        case_ids_val_og = case_ids_val[0]
+        case_ids_val_cf = case_ids_val[1]
+        case_ids_test_og = case_ids_test[0]
+        case_ids_test_cf = case_ids_test[1]
     print("INFO: Preprocessing completed.")
     
     print("INFO: Feature names: ", feature_names)
@@ -86,12 +98,21 @@ if __name__ == "__main__":
         seed = args.seed
     )
 
-    train_dataset = CounterfactualDataset(X_train, X_train_cf, y_train, case_ids_train)
-    val_dataset = CounterfactualDataset(X_val, X_val_cf, y_val, case_ids_val)
-    test_dataset = CounterfactualDataset(X_test, X_test_cf, y_test, case_ids_test)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    train_dataset_og = StandardDataset(X_train, y_train_og, case_ids_train_og)
+    val_dataset_og = StandardDataset(X_val, y_val_og, case_ids_val_og)
+    test_dataset_og = StandardDataset(X_test, y_test_og, case_ids_test_og)
+
+    train_dataset_cf = CounterfactualDataset(X_train_cf, y_train_og, case_ids_train_cf)
+    val_dataset_cf = CounterfactualDataset(X_val_cf, y_val_og, case_ids_val_cf)
+    test_dataset_cf = CounterfactualDataset(X_test_cf, y_test_og, case_ids_test_cf)
+
+    train_loader = DataLoader(train_dataset_og, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset_og, batch_size=32, shuffle=False)
+    test_loader = DataLoader(test_dataset_og, batch_size=32, shuffle=False)
+
+    train_loader_cf = DataLoader(train_dataset_cf, batch_size=32, shuffle=True)
+    val_loader_cf = DataLoader(val_dataset_cf, batch_size=32, shuffle=False)
+    test_loader_cf = DataLoader(test_dataset_cf, batch_size=32, shuffle=False)
 
     if args.train_vanilla:
         lstm = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
@@ -102,7 +123,7 @@ if __name__ == "__main__":
             lstm.train()
             total_loss = 0.0
             total_validation_loss = 0.0
-            for batch_idx, (x, x_cf, y, case_id) in enumerate(train_loader):
+            for batch_idx, (x, y, case_id) in enumerate(train_loader):
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
                 outputs = lstm(x)
@@ -113,7 +134,7 @@ if __name__ == "__main__":
             avg_loss = total_loss / len(train_loader)
             lstm.eval()
             with torch.no_grad():
-                for batch_idx, (x, x_cf, y, case_id) in enumerate(val_loader):
+                for batch_idx, (x, y, case_id) in enumerate(val_loader):
                     x, y = x.to(device), y.to(device)
                     outputs = lstm(x)
                     val_loss = criterion(outputs.squeeze(), y)
@@ -142,25 +163,28 @@ if __name__ == "__main__":
         maes = []
         rmses = []
         predictions = []
+        predictions_og = []
         predictions_cf = []
         gt_labels = []
         with torch.no_grad():
-            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader):
+            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader_cf):
                 x, x_cf, y = x.to(device), x_cf.to(device), y.to(device)
+                x_cf = x_cf.squeeze(1)
                 y_pred = lstm(x)
                 y_pred = scalers_test['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
                 y_pred = np.maximum(y_pred, 0)
-                predictions.extend(y_pred.flatten().tolist())
+                predictions_og.extend(y_pred.flatten().tolist())
                 y_true = scalers_test['remaining_time'].inverse_transform(y.cpu().numpy().reshape(-1, 1))
                 gt_labels.extend(y_true.flatten().tolist())
                 y_cf_pred = lstm(x_cf)
                 y_cf_pred = scalers_test['remaining_time'].inverse_transform(y_cf_pred.cpu().numpy().reshape(-1, 1))
                 y_cf_pred = np.maximum(y_cf_pred, 0)
                 predictions_cf.extend(y_cf_pred.flatten().tolist())
+        
         print("INFO: Evaluation completed!")
-        print(f"INFO: Baseline Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
+        print(f"INFO: Baseline Test MAE: {mean_absolute_error(gt_labels, predictions_og):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions_og):.4f}, CF MSE: {compute_cf_mse(predictions_og, predictions_cf):.4f}")
         print("INFO: Generating recommendations and evaluating counterfactual fairness...")
-        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, lstm, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LSTM", save_to_file=True)
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, lstm, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LSTM", save_to_file=True)
         cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
         print(f"INFO: Baseline Counterfactual Fairness: {cf_fairness:.4f}")
     
@@ -181,53 +205,29 @@ if __name__ == "__main__":
         def compute_regr_fair_sat_level(loader):
             mean_sat_regr = 0
             mean_sat_fair = 0
-            for x_data, x_cf_data, y_data, case_id in loader:
-                x_data, y_data, x_cf_data = x_data.to(device), y_data.to(device), x_cf_data.to(device)
-                x = ltn.Variable("x", x_data)
-                y = ltn.Variable("y", y_data)
-                x_cf = ltn.Variable("x_cf", x_cf_data)
-                mean_sat_regr += Forall(ltn.diag(x, y), Eq(f(x), y)).value
-                mean_sat_fair += Forall(ltn.diag(x, x_cf), Eq(f(x), f(x_cf))).value
+            with torch.no_grad():
+                for x_data, x_cf_data, y_data, _ in loader:
+                    x_data.to(device), x_cf_data.to(device), y_data.to(device)
+                    num_counterfactual = x_cf_data.shape[1]
+                    x_cf_data = x_cf_data.view(-1, x_cf_data.shape[-1])
+                    x_data_repeated = x_data.repeat_interleave(num_counterfactual, dim=0)
+                    x = ltn.Variable("x", x_data)
+                    x_cf = ltn.Variable("x_cf", x_cf_data)
+                    x_repeated = ltn.Variable("x_repeated", x_data_repeated)
+                    y = ltn.Variable("y", y_data)
+                    mean_sat_regr += Forall(ltn.diag(x, y), Eq(f(x), y)).value
+                    mean_sat_fair += Forall(ltn.diag(x_repeated, x_cf), Eq(f(x_repeated), f(x_cf))).value
             mean_sat_regr /= len(loader)
             mean_sat_fair /= len(loader)
             return mean_sat_regr, mean_sat_fair
-        def compute_mae_rmse(loader):
-            mean_mae = 0
-            mean_rmse = 0
-            for x, x_cf, y, case_id in loader:
-                x, y = x.to(device), y.to(device)
-                predictions = f.model(x).cpu().detach().numpy()
-                predictions = scalers_test['remaining_time'].inverse_transform(predictions.reshape(-1, 1))
-                predictions = np.maximum(predictions, 0)
-                y = scalers_test['remaining_time'].inverse_transform(y.cpu().numpy().reshape(-1, 1))
-                mean_mae += mean_absolute_error(y, predictions)
-                mean_rmse += root_mean_squared_error(y, predictions)
-            mean_mae /= len(loader)
-            mean_rmse /= len(loader)
-            return mean_mae, mean_rmse
-        def compute_cf_mse_nesy(loader):
-            total_mse = 0
-            count = 0
-            for x, x_cf, y, case_id in loader:
-                x, x_cf = x.to(device), x_cf.to(device)
-                predictions = f.model(x).cpu().detach().numpy()
-                predictions = scalers_test['remaining_time'].inverse_transform(predictions.reshape(-1, 1))
-                predictions = np.maximum(predictions, 0)
-                predictions_cf = f.model(x_cf).cpu().detach().numpy()
-                predictions_cf = scalers_test['remaining_time'].inverse_transform(predictions_cf.reshape(-1, 1))
-                predictions_cf = np.maximum(predictions_cf, 0)
-                mse = np.mean((predictions - predictions_cf) ** 2)
-                total_mse += mse * x.size(0)
-                count += x.size(0)
-            return total_mse / count
         print("INFO: Starting training LTN model...")
         print("INFO: Training with regression axioms only...")
-        for epoch in range(1, 10 + 1):
+        for epoch in range(1, args.num_epochs_nesy + 1):
             model.train()
             total_loss = 0.0
             total_validation_loss = 0.0
-            for batch_idx, (x_data, x_cf_data, y_data, case_id) in enumerate(train_loader):
-                x_data, x_cf_data, y_data = x_data.to(device), x_cf_data.to(device), y_data.to(device)
+            for batch_idx, (x_data, y_data, case_id) in enumerate(train_loader):
+                x_data, y_data = x_data.to(device), y_data.to(device)
                 optimizer.zero_grad()
                 x = ltn.Variable("x", x_data)
                 y = ltn.Variable("y", y_data)
@@ -237,20 +237,45 @@ if __name__ == "__main__":
                 optimizer.step()
                 total_loss += loss.item()
             avg_loss = total_loss / len(train_loader)
+            model.eval()
+            with torch.no_grad():
+                for x_data, y_data, _ in val_loader:
+                    x_data.to(device), y_data.to(device)
+                    x = ltn.Variable("x", x_data)
+                    y = ltn.Variable("y", y_data)
+                    val_loss = 1.0 - Forall(ltn.diag(x, y), Eq(f(x), y)).value
+                    total_validation_loss += val_loss.item()
+            avg_val_loss = total_validation_loss / len(val_loader)
             if epoch % 1 == 0:
-                mae, rmse = compute_mae_rmse(test_loader)
-                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader)
-                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader)
-                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader)
+                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader_cf)
+                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader_cf)
+                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader_cf)
                 print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
+            if epoch == 1:
+                best_val_loss_nesy = avg_val_loss
+                patience_counter_nesy = 0
+                torch.save(model.state_dict(), 'best_model_nesy_regr.pt')
+            else:
+                if avg_val_loss < best_val_loss_nesy:
+                    best_val_loss_nesy = avg_val_loss
+                    patience_counter_nesy = 0
+                    torch.save(model.state_dict(), 'best_model_nesy_regr.pt')
+                else:
+                    patience_counter_nesy += 1
+                    if patience_counter_nesy >= 10:
+                        print(f"INFO: Early stopping triggered at epoch {epoch}")
+                        model.load_state_dict(torch.load('best_model_nesy_regr.pt'))
+                        break
+        model.load_state_dict(torch.load('best_model_nesy_regr.pt'))
         print("INFO: Starting evaluation on test set...")
         model.eval()
         predictions = []
         predictions_cf = []
         gt_labels = []
         with torch.no_grad():
-            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader):
+            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader_cf):
                 x, x_cf, y = x.to(device), x_cf.to(device), y.to(device)
+                x_cf = x_cf.squeeze(1)
                 y_pred = model(x)
                 y_pred = scalers_test['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
                 y_pred = np.maximum(y_pred, 0)
@@ -264,7 +289,7 @@ if __name__ == "__main__":
         print("INFO: Evaluation completed!")
         print(f"INFO: LTN Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
         print("INFO: Generating recommendations and evaluating counterfactual fairness...")
-        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN", save_to_file=True)
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN", save_to_file=True)
         cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
         print(f"INFO: LTN Counterfactual Fairness: {cf_fairness:.4f}")
         pareto_archive_val = []
@@ -276,27 +301,30 @@ if __name__ == "__main__":
         for epoch in range(1, args.num_epochs_nesy + 1):
             model.train()
             total_loss = 0.0
-            for batch_idx, (x_data, x_cf_data, y_data, case_id) in enumerate(train_loader):
+            for batch_idx, (x_data, x_cf_data, y_data, case_id) in enumerate(train_loader_cf):
                 x_data, x_cf_data, y_data = x_data.to(device), x_cf_data.to(device), y_data.to(device)
                 optimizer.zero_grad()
+                num_counterfactual = x_cf_data.shape[1]
+                x_cf_data = x_cf_data.view(-1, x_cf_data.shape[-1])
+                x_data_repeated = x_data.repeat_interleave(num_counterfactual, dim=0)
                 x = ltn.Variable("x", x_data)
                 x_cf = ltn.Variable("x_cf", x_cf_data)
+                x_repeated = ltn.Variable("x_repeated", x_data_repeated)
                 y = ltn.Variable("y", y_data)
                 sat_regression = Forall(ltn.diag(x, y), Eq(f(x), y)).value
-                sat_fairness = Forall(ltn.diag(x, x_cf), Eq(f(x), f(x_cf))).value
+                sat_fairness = Forall(ltn.diag(x_repeated, x_cf), Eq(f(x_repeated), f(x_cf))).value
                 sat_agg = SatAgg(*[sat_regression, sat_fairness])
                 loss = 1.0 - sat_agg
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            avg_loss = total_loss / len(train_loader)
+            avg_loss = total_loss / len(train_loader_cf)
             if epoch % 1 == 0:
-                mae, rmse = compute_mae_rmse(test_loader)
-                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader)
-                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader)
-                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader)
+                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader_cf)
+                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader_cf)
+                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader_cf)
                 print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
-                current_val = [sat_regression.item(), sat_fairness.item()]
+                current_val = [sat_regr_val.item(), sat_fair_val.item()]
                 val_history.append(current_val)
                 dominated = False
                 for i, p in enumerate(pareto_archive_val):
@@ -337,8 +365,9 @@ if __name__ == "__main__":
         predictions_cf = []
         gt_labels = []
         with torch.no_grad():
-            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader):
+            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader_cf):
                 x, x_cf, y = x.to(device), x_cf.to(device), y.to(device)
+                x_cf = x_cf.squeeze(1)
                 y_pred = model(x)
                 y_pred = scalers_test['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
                 y_pred = np.maximum(y_pred, 0)
@@ -352,7 +381,7 @@ if __name__ == "__main__":
         print("INFO: Evaluation completed!")
         print(f"INFO: LTN + Fairness Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
         print("INFO: Generating recommendations and evaluating counterfactual fairness...")
-        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN_Fairness", save_to_file=True)
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN_Fairness", save_to_file=True)
         cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
         print(f"INFO: LTN + Fairness Counterfactual Fairness: {cf_fairness:.4f}")
         val_data = np.array(val_history)
