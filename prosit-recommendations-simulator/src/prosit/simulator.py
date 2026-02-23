@@ -27,7 +27,8 @@ from prosit.utils.common_utils import (
     compute_transition_weights_from_model, 
     add_minutes_with_calendar,
     build_df_features,
-    return_resource
+    return_resource,
+    explore_invisible_path_to_activity
     )
 from prosit.utils.distribution_utils import sampling_from_dist
 from prosit.utils.save_and_load_utils import decision_rules_to_dict, transition_to_name, convert_calendar_names, dict_to_decrules, name_to_transition, fromstr_to_scipy
@@ -515,6 +516,20 @@ class SimulatorEngine:
                     t_enabled = case["enabled"][chosen_transition]
                     case["rec_act"] = None
                     flag_rec = True
+                else:
+                    invisible_transitions_enabled = [t for t in enabled_transitions if t.label is None]     
+                    if invisible_transitions_enabled:
+                        invisible_path = explore_invisible_path_to_activity(
+                            self.net, 
+                            case["marking"], 
+                            case["rec_act"]
+                        )
+                        if invisible_path:
+                            chosen_transition = invisible_path[0]
+                            activity = None 
+                            t_enabled = case["enabled"][chosen_transition]
+                            flag_rec = True
+
             if not flag_rec:        
                 if not self.simulation_parameters.rules_mode:
                     transition_weights = self.simulation_parameters.transition_weights
@@ -596,8 +611,8 @@ class SimulatorEngine:
 
                 
                 t_end = add_minutes_with_calendar(t_start_exec, int(ex_time), self.simulation_parameters.calendars[resource])
-                event_log.append((case_id, activity, resource, t_enabled, t_start_exec, t_end) + tuple(case['attributes'].values()))
 
+                event_log.append((case_id, activity, resource, t_enabled, t_start_exec, t_end) + tuple(case['attributes'].values()))
                 resource_schedule[resource].append((t_start_exec, t_end))
                 case["history"][activity] += 1
             else:
