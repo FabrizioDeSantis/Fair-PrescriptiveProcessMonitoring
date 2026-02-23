@@ -28,35 +28,40 @@ def list_str(string=str):
 class HashTable:
 
     # Create empty bucket list of given size
-    def __init__(self, size, abstraction="sequence"):
+    def __init__(self, size, abstraction="sequence", k=None):
         """
         Initialize hash table.
-        
+
         Args:
             size: Number of buckets in the hash table
             abstraction: "sequence" (order matters) or "set" (order doesn't matter)
+            k: If not None, keys that are lists are trimmed to the last k elements
+               when getting/setting (so callers can pass full prefix and lookup still works).
         """
         self.size = size
         self.abstraction = abstraction
+        self.k = k
         self.hash_table = self.create_buckets()
 
     def create_buckets(self):
         return [list() for _ in range(self.size)]
 
+    def _normalize_key(self, key):
+        """Convert key to canonical string form, trimming to last k elements if self.k is set."""
+        if isinstance(key, list):
+            if self.k is not None and len(key) > self.k:
+                key = key[-self.k:]
+            if self.abstraction == "set":
+                key = str_list(sorted(key))
+            else:
+                key = str_list(key)
+        if not isinstance(key, str):
+            key = str(key)
+        return key
+
     # Insert values into hash map
     def set_val(self, key, val):
-        # Normalize key based on abstraction mode
-        if isinstance(key, list):
-            if self.abstraction == "set":
-                # Sort the list to make order irrelevant
-                key = str_list(sorted(key))
-            else:  # abstraction == "sequence"
-                key = str_list(key)
-        elif isinstance(key, str):
-            # If it's already a string, keep it as is
-            pass
-        else:
-            key = str(key)
+        key = self._normalize_key(key)
 
         # Get the index from the key
         # using hash function
@@ -85,18 +90,7 @@ class HashTable:
 
     # Return searched value with specific key
     def get_val(self, key):
-        # Normalize key based on abstraction mode
-        if isinstance(key, list):
-            if self.abstraction == "set":
-                # Sort the list to make order irrelevant
-                key = str_list(sorted(key))
-            else:  # abstraction == "sequence"
-                key = str_list(key)
-        elif isinstance(key, str):
-            # If it's already a string, keep it as is
-            pass
-        else:
-            key = str(key)
+        key = self._normalize_key(key)
 
         # Get the index from the key using
         # hash function
@@ -125,18 +119,7 @@ class HashTable:
 
     # Remove a value with specific key
     def delete_val(self, key):
-        # Normalize key based on abstraction mode
-        if isinstance(key, list):
-            if self.abstraction == "set":
-                # Sort the list to make order irrelevant
-                key = str_list(sorted(key))
-            else:  # abstraction == "sequence"
-                key = str_list(key)
-        elif isinstance(key, str):
-            # If it's already a string, keep it as is
-            pass
-        else:
-            key = str(key)
+        key = self._normalize_key(key)
 
         # Get the index from the key using
         # hash function
@@ -231,7 +214,7 @@ def fill_hashmap(X_train, case_id_name=str, activity_name=str, thrs=.2, abstract
     else:
         print('Using full sequence as key for transition system')
     
-    traces_hash = HashTable(max_traces, abstraction=abstraction_mode)
+    traces_hash = HashTable(max_traces, abstraction=abstraction_mode, k=k)
     for trace_idx in idx_list:
 
         trace = X_train[X_train[case_id_name] == trace_idx].reset_index(drop=True)
