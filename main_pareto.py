@@ -3,12 +3,12 @@ from model.lstm import LSTMModel
 import pandas as pd
 import numpy as np
 import torch
-from data.dataset import CounterfactualDataset, ModelConfig, StandardDataset
+from data.dataset import StandardDataset, CounterfactualDataset, ModelConfig
 from torch.utils.data import DataLoader
 import logging
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from data.utils import compute_cf_mse
-from utils import recommend_act_loader, compute_cf_fairness
+from utils import create_single_new_feat_vec, recommend_act_loader, compute_cf_fairness
 from data.utils import compute_average_execution_time
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -38,15 +38,25 @@ def get_args():
 
 if __name__ == "__main__":
 
-   
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     # logger = logging.getLogger(__name__)
     # logging.basicConfig(filename='output.log', level=logging.INFO)
 
     args = get_args()
-    print('Args are', args)
+
     print("INFO: Reading dataset...")
-    data = pd.read_pickle('data/bpi12.pkl')
+    if args.dataset == "bpi12":
+        data = pd.read_pickle('data/bpi12.pkl')
+    elif args.dataset == "hospital":
+        data = pd.read_csv("data/hospital_log_medium.csv")
+    elif args.dataset == "cancer":
+        data = pd.read_pickle("data/cancer_screening.pkl")
+    elif args.dataset == "hospital_billing_gender":
+        data = pd.read_pickle("data/hospital_billing_gender.pkl")
+    elif args.dataset == "hospital_billing_age":
+        data = pd.read_pickle("data/hospital_billing_age.pkl")
+    elif args.dataset == "hospital_billing_age_gender":
+        data = pd.read_pickle("data/hospital_billing_age_gender.pkl")
 
     if 'case_id' in data.columns:
         case_id_name = 'case_id'
@@ -62,25 +72,47 @@ if __name__ == "__main__":
     else:
         raise ValueError("Could not find activity column. Available columns: " + str(list(data.columns)))
     
-    data[case_id_name] = data[case_id_name].astype(int)
+    if 'time' in data.columns:
+        data.rename(columns={'time': 'time:timestamp'}, inplace=True)
 
     print("INFO: Dataset read successfully.")
     print("INFO: Preprocessing dataset...")
     if args.dataset == "bpi12" or args.dataset == "bpi12_kappel":
         from data import preprocess_bpi12
-        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, ["gender"], args.abstraction_mode)
-        y_train_og = y_train[0]
-        y_train_cf = y_train[1]
-        y_val_og = y_val[0]
-        y_val_cf = y_val[1]
-        y_test_og = y_test[0]
-        y_test_cf = y_test[1]
-        case_ids_train_og = case_ids_train[0]
-        case_ids_train_cf = case_ids_train[1]
-        case_ids_val_og = case_ids_val[0]
-        case_ids_val_cf = case_ids_val[1]
-        case_ids_test_og = case_ids_test[0]
-        case_ids_test_cf = case_ids_test[1]
+        sensitive_attrs = ["gender"]
+        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
+    if args.dataset == "cancer":
+        from data import preprocess_cancer_log
+        sensitive_attrs = ["gender"]
+        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_cancer_log.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
+    elif args.dataset == "hospital":
+        from data import preprocess_hospital_log
+        sensitive_attrs = ["case:private_insurance", "case:gender", "case:citizen", "case:age", "case:underlying_condition"]
+        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_hospital_log.preprocess_eventlog(data, sensitive_attrs, args.abstraction_mode)
+    elif args.dataset in ("hospital_billing_gender", "hospital_billing_age", "hospital_billing_age_gender"):
+        from data import preprocess_hospital_billing_log
+        sensitive_map = {
+            "hospital_billing_gender": ["gender"],
+            "hospital_billing_age": ["age"],
+            "hospital_billing_age_gender": ["age", "gender"],
+        }
+        sensitive_attrs = sensitive_map[args.dataset]
+        if not np.issubdtype(data[case_id_name].dtype, np.integer):
+            data[case_id_name] = data[case_id_name].astype('category').cat.codes + 1
+        data[case_id_name] = data[case_id_name].astype(int)
+        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_hospital_billing_log.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
+    y_train_og = y_train[0]
+    y_train_cf = y_train[1]
+    y_val_og = y_val[0]
+    y_val_cf = y_val[1]
+    y_test_og = y_test[0]
+    y_test_cf = y_test[1]
+    case_ids_train_og = case_ids_train[0]
+    case_ids_train_cf = case_ids_train[1]
+    case_ids_val_og = case_ids_val[0]
+    case_ids_val_cf = case_ids_val[1]
+    case_ids_test_og = case_ids_test[0]
+    case_ids_test_cf = case_ids_test[1]
     print("INFO: Preprocessing completed.")
     
     print("INFO: Feature names: ", feature_names)
@@ -93,7 +125,7 @@ if __name__ == "__main__":
         num_layers=args.num_layers,
         dropout_rate=args.dropout_rate,
         num_epochs = args.num_epochs,
-        dataset = "bpi12",
+        dataset = args.dataset,
         sequence_length = seq_len,
         seed = args.seed
     )
@@ -197,6 +229,27 @@ if __name__ == "__main__":
         Implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
         alpha = 0.05
         Eq = ltn.Predicate(func = lambda u, v: torch.exp(-alpha * torch.sqrt(torch.sum(torch.square(u - v), dim=1) + 1e-10 )))
+        Equal = ltn.Predicate(func = lambda u, v: (u == v).float())
+        def recommend_act(x):
+            batch_results = []
+            for i in range(len(x)):
+                index = (x[i][:seq_len] == 0).nonzero(as_tuple=True)[0]
+                prefix = [activity_mapping[int(act)] for act in x[i][:seq_len][x[i][:seq_len] != 0].tolist()]
+                next_acts = transition_system.get_val(prefix)
+                if isinstance(next_acts, list):
+                    act_kpi_list = []
+                    for act in next_acts:
+                        act_int = [k for k, v in activity_mapping.items() if v == act][0]
+                        if len(index) > 0:
+                            new_x_og = create_single_new_feat_vec(x[i], act_int, index[0], seq_len, feature_names, avg_exec_times.get(act, 0), scalers_training)
+                            prediction_og = model(new_x_og.unsqueeze(0).to(device))
+                            act_kpi_list.append((act_int, max(0, scalers_training['remaining_time'].inverse_transform([[prediction_og.item()]])[0][0])))
+                    act_kpi_list.sort(key=lambda x: x[1])
+                    batch_results.append(torch.tensor(act_kpi_list[0][0]))
+                else:
+                    batch_results.append(torch.tensor(0))
+            return torch.stack(batch_results).to(device)
+        ReccAct = ltn.Function(func = lambda u: recommend_act(u))
         SatAgg = ltn.fuzzy_ops.SatAgg()
         model = LSTMModel(vocab_sizes, config, 1, feature_names).to(device)
         f = ltn.Function(model)
@@ -205,6 +258,7 @@ if __name__ == "__main__":
         def compute_regr_fair_sat_level(loader):
             mean_sat_regr = 0
             mean_sat_fair = 0
+            mean_sat_fair_recc = 0
             with torch.no_grad():
                 for x_data, x_cf_data, y_data, _ in loader:
                     x_data.to(device), x_cf_data.to(device), y_data.to(device)
@@ -217,9 +271,11 @@ if __name__ == "__main__":
                     y = ltn.Variable("y", y_data)
                     mean_sat_regr += Forall(ltn.diag(x, y), Eq(f(x), y)).value
                     mean_sat_fair += Forall(ltn.diag(x_repeated, x_cf), Eq(f(x_repeated), f(x_cf))).value
+                    mean_sat_fair_recc += Forall(ltn.diag(x_repeated, x_cf), Equal(ReccAct(x_repeated), ReccAct(x_cf))).value
             mean_sat_regr /= len(loader)
             mean_sat_fair /= len(loader)
-            return mean_sat_regr, mean_sat_fair
+            mean_sat_fair_recc /= len(loader)
+            return mean_sat_regr, mean_sat_fair, mean_sat_fair_recc
         print("INFO: Starting training LTN model...")
         print("INFO: Training with regression axioms only...")
         for epoch in range(1, args.num_epochs_nesy + 1):
@@ -246,11 +302,12 @@ if __name__ == "__main__":
                     val_loss = 1.0 - Forall(ltn.diag(x, y), Eq(f(x), y)).value
                     total_validation_loss += val_loss.item()
             avg_val_loss = total_validation_loss / len(val_loader)
-            if epoch % 1 == 0:
-                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader_cf)
-                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader_cf)
-                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader_cf)
-                print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
+            # if epoch % 1 == 0:
+                # sat_regr_train, sat_fair_train, sat_fair_recc_train = compute_regr_fair_sat_level(train_loader_cf)
+                # sat_regr_val, sat_fair_val, sat_fair_recc_val = compute_regr_fair_sat_level(val_loader_cf)
+                # sat_regr_test, sat_fair_test, sat_fair_recc_test = compute_regr_fair_sat_level(test_loader_cf)
+                # print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
+            print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}]")
             if epoch == 1:
                 best_val_loss_nesy = avg_val_loss
                 patience_counter_nesy = 0
@@ -313,18 +370,20 @@ if __name__ == "__main__":
                 y = ltn.Variable("y", y_data)
                 sat_regression = Forall(ltn.diag(x, y), Eq(f(x), y)).value
                 sat_fairness = Forall(ltn.diag(x_repeated, x_cf), Eq(f(x_repeated), f(x_cf))).value
-                sat_agg = SatAgg(*[sat_regression, sat_fairness])
+                sat_fairness_recc = Forall(ltn.diag(x_repeated, x_cf), Equal(ReccAct(x_repeated), ReccAct(x_cf))).value
+                sat_agg = SatAgg(*[sat_regression, sat_fairness, sat_fairness_recc])
                 loss = 1.0 - sat_agg
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
             avg_loss = total_loss / len(train_loader_cf)
             if epoch % 1 == 0:
-                sat_regr_train, sat_fair_train = compute_regr_fair_sat_level(train_loader_cf)
-                sat_regr_val, sat_fair_val = compute_regr_fair_sat_level(val_loader_cf)
-                sat_regr_test, sat_fair_test = compute_regr_fair_sat_level(test_loader_cf)
-                print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
-                current_val = [sat_regr_val.item(), sat_fair_val.item()]
+                # sat_regr_train, sat_fair_train, sat_fair_recc_train = compute_regr_fair_sat_level(train_loader_cf)
+                sat_regr_val, sat_fair_val, sat_fair_recc_val = compute_regr_fair_sat_level(val_loader_cf)
+                # sat_regr_test, sat_fair_test, sat_fair_recc_test = compute_regr_fair_sat_level(test_loader_cf)
+                # print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}], Loss: {avg_loss:.4f}, Train Regr Sat: {sat_regr_train:.4f}, Val Regr Sat: {sat_regr_val:.4f}, Test Regr Sat: {sat_regr_test:.4f}, Train Fair Sat: {sat_fair_train:.4f}, Val Fair Sat: {sat_fair_val:.4f}, Test Fair Sat: {sat_fair_test:.4f}")
+                print(f"INFO: Epoch [{epoch}/{args.num_epochs_nesy}]")
+                current_val = [sat_regr_val.item(), sat_fair_recc_val.item()]
                 val_history.append(current_val)
                 dominated = False
                 for i, p in enumerate(pareto_archive_val):
@@ -354,9 +413,11 @@ if __name__ == "__main__":
             checkpoint = torch.load(model_path)
             sats = checkpoint['val_sats']
             pareto_models.append((sats, model_path))
+        
+        # Best balanced model (highest minimum of both satisfactions)
         best_idx = np.argmax([min(sats) for sats, _ in pareto_models])
         best_model_path = pareto_models[best_idx][1]
-        print(f"INFO: Loading best Pareto model from {best_model_path} for final evaluation.")
+        print(f"INFO: Loading best balanced Pareto model from {best_model_path} for final evaluation.")
         checkpoint = torch.load(best_model_path)
         model.load_state_dict(checkpoint['model_state_dict'])
         print("INFO: Starting evaluation on test set...")
@@ -379,11 +440,43 @@ if __name__ == "__main__":
                 y_cf_pred = np.maximum(y_cf_pred, 0)
                 predictions_cf.extend(y_cf_pred.flatten().tolist())
         print("INFO: Evaluation completed!")
-        print(f"INFO: LTN + Fairness Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
+        print(f"INFO: LTN + Fairness (Balanced) Test MAE: {mean_absolute_error(gt_labels, predictions):.4f}, RMSE: {root_mean_squared_error(gt_labels, predictions):.4f}, CF MSE: {compute_cf_mse(predictions, predictions_cf):.4f}")
         print("INFO: Generating recommendations and evaluating counterfactual fairness...")
-        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN_Fairness", save_to_file=True)
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN_Fairness_Balanced", save_to_file=True)
         cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
-        print(f"INFO: LTN + Fairness Counterfactual Fairness: {cf_fairness:.4f}")
+        print(f"INFO: LTN + Fairness (Balanced) Counterfactual Fairness: {cf_fairness:.4f}")
+
+        # Best fairness model (highest fairness satisfaction on validation set)
+        best_fair_idx = np.argmax([sats[1] for sats, _ in pareto_models])
+        best_fair_model_path = pareto_models[best_fair_idx][1]
+        print(f"INFO: Loading best fairness Pareto model from {best_fair_model_path} for final evaluation.")
+        checkpoint = torch.load(best_fair_model_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print("INFO: Starting evaluation on test set (best fairness model)...")
+        model.eval()
+        predictions_fair = []
+        predictions_cf_fair = []
+        gt_labels_fair = []
+        with torch.no_grad():
+            for batch_idx, (x, x_cf, y, case_id) in enumerate(test_loader_cf):
+                x, x_cf, y = x.to(device), x_cf.to(device), y.to(device)
+                x_cf = x_cf.squeeze(1)
+                y_pred = model(x)
+                y_pred = scalers_test['remaining_time'].inverse_transform(y_pred.cpu().numpy().reshape(-1, 1))
+                y_pred = np.maximum(y_pred, 0)
+                predictions_fair.extend(y_pred.flatten().tolist())
+                y_true = scalers_test['remaining_time'].inverse_transform(y.cpu().numpy().reshape(-1, 1))
+                gt_labels_fair.extend(y_true.flatten().tolist())
+                y_cf_pred = model(x_cf)
+                y_cf_pred = scalers_test['remaining_time'].inverse_transform(y_cf_pred.cpu().numpy().reshape(-1, 1))
+                y_cf_pred = np.maximum(y_cf_pred, 0)
+                predictions_cf_fair.extend(y_cf_pred.flatten().tolist())
+        print("INFO: Evaluation completed!")
+        print(f"INFO: LTN + Fairness (Best Fair) Test MAE: {mean_absolute_error(gt_labels_fair, predictions_fair):.4f}, RMSE: {root_mean_squared_error(gt_labels_fair, predictions_fair):.4f}, CF MSE: {compute_cf_mse(predictions_fair, predictions_cf_fair):.4f}")
+        print("INFO: Generating recommendations and evaluating counterfactual fairness...")
+        act_kpi_og_final_results, act_kpi_cf_final_results = recommend_act_loader(test_loader_cf, transition_system, model, activity_mapping, seq_len, feature_names, avg_exec_times, scalers_test, device, args.dataset, "LTN_Fairness_BestFair", save_to_file=True)
+        cf_fairness = compute_cf_fairness(act_kpi_og_final_results, act_kpi_cf_final_results)
+        print(f"INFO: LTN + Fairness (Best Fair) Counterfactual Fairness: {cf_fairness:.4f}")
         val_data = np.array(val_history)
         pareto_data = np.array(pareto_archive_val)
         sns.set_style("whitegrid")
