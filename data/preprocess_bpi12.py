@@ -2,7 +2,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import random
-from counterfactuals import generate_counterfactual_event_log
+from counterfactuals import generate_counterfactual_event_log, generate_counterfactuals_dowhy
 from data.utils import remaining_time_helper_func
 from transition_system import hash_maps
 
@@ -215,9 +215,12 @@ def preprocess_eventlog(data, dataset_name, sensitive_attr, abstraction_mode):
         raise ValueError("Could not find activity column. Available columns: " + str(list(data.columns)))
 
     data = remaining_time_helper_func(data, case_id_column)
-
+    data[case_id_column] = data[case_id_column].astype(int)
     train_ids, val_ids, test_ids = create_temporal_split(data, case_id_column, val_ratio=0.2, test_ratio=0.2)
     X_train = data[data[case_id_column].isin(train_ids)]
+    X_test = data[data[case_id_column].isin(test_ids)]
+    X_train.to_csv("data/bpi12_train.csv", index=False)
+    X_test.to_csv("data/bpi12_test.csv", index=False)
     print("INFO: Creating transition system...")
     transition_system = hash_maps.fill_hashmap(X_train=X_train, case_id_name=case_id_column, activity_name=activity_name, thrs=0, abstraction=abstraction_mode, k=None)
     print("INFO: Transition system created.")
@@ -236,8 +239,13 @@ def preprocess_eventlog(data, dataset_name, sensitive_attr, abstraction_mode):
 
     labels = ['gender', "case:AMOUNT_REQ"]
     data["case:AMOUNT_REQ"] = data["case:AMOUNT_REQ"].astype(int)
+    data.to_csv("data/bpi12_preprocessed.csv", index=False)
     print("INFO: Generating counterfactual event log...")
-    data_counterfactual = generate_counterfactual_event_log(data, sensitive_attr, labels, case_id_column)
+    #data_counterfactual = generate_counterfactual_event_log(data, sensitive_attr, labels, case_id_column)
+    #############################
+    data_counterfactual = generate_counterfactuals_dowhy(data, sensitive_attr, labels, case_id_column, dataset_name)
+    data_counterfactual["counterfactual_index"] = 0
+    #############################
     print("INFO: Counterfactual event log generated.")
 
     return create_prefixes(data, data_counterfactual, case_id_column, train_ids, val_ids, test_ids, numerical_features), vocab_sizes, transition_system, activity_mapping
