@@ -2,9 +2,26 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import random
-from counterfactuals import generate_counterfactual_event_log, generate_counterfactuals_dowhy
+from counterfactuals import generate_counterfactual_event_log, generate_counterfactuals_dowhy_bpi13
 from data.utils import remaining_time_helper_func, create_temporal_features
 from transition_system import hash_maps
+
+def print_sensitive_attribute_distribution(data, case_id_column, sensitive_attr):
+    sensitive_attrs = [sensitive_attr] if isinstance(sensitive_attr, str) else sensitive_attr
+    first_occurrences = data.drop_duplicates(subset=[case_id_column], keep="first")
+
+    print("INFO: Sensitive attribute distribution by first case occurrence:")
+    for attr in sensitive_attrs:
+        if attr not in first_occurrences.columns:
+            print(f"WARNING: Sensitive attribute '{attr}' not found. Skipping distribution.")
+            continue
+
+        distribution = first_occurrences[attr].value_counts(normalize=False, dropna=False)
+        total = distribution.sum()
+        print(f"INFO: {attr}")
+        for value, percentage in distribution.items():
+            value_label = "NaN" if pd.isna(value) else value
+            print(f"  {value_label}: {(percentage / total) * 100:.2f}%")
 
 def create_temporal_split(data, case_id_column, val_ratio=0.2, test_ratio=0.2):
     data = data.groupby(case_id_column).first().reset_index()
@@ -214,6 +231,7 @@ def preprocess_eventlog(data, dataset_name, sensitive_attr, abstraction_mode):
     else:
         raise ValueError("Could not find activity column. Available columns: " + str(list(data.columns)))
     data = data.groupby(case_id_column).filter(lambda x: len(x) > 2)
+    print_sensitive_attribute_distribution(data, case_id_column, sensitive_attr)
     data = remaining_time_helper_func(data, case_id_column)
     data = create_temporal_features(data)
     data[case_id_column] = data[case_id_column].astype(int)
@@ -238,14 +256,16 @@ def preprocess_eventlog(data, dataset_name, sensitive_attr, abstraction_mode):
         data[feature] = data[feature].cat.codes + 1
         vocab_sizes[feature] = data[feature].max()
 
-    labels = ['resource country', "organization country", "org:resource", "organization involved"]
+    labels = ["organization country", "organization involved", "impact", "product"]
     print("INFO: Generating counterfactual event log...")
     data = data[[case_id_column, 'concept:name', 'time:timestamp', 'org:group', 'resource country', 'organization country', 'org:resource', 'organization involved', 'org:role', 'impact', 'product', 'day_of_week', 'time_of_day', 'time_delta', 'remaining_time']]
-    data_counterfactual = generate_counterfactual_event_log(data, sensitive_attr, labels, case_id_column)
+    # data_counterfactual = generate_counterfactual_event_log(data, sensitive_attr, labels, case_id_column)
     #############################
-    # data_counterfactual = generate_counterfactuals_dowhy(data, sensitive_attr, labels, case_id_column, dataset_name)
+    data_counterfactual = generate_counterfactuals_dowhy_bpi13(data, sensitive_attr, labels, case_id_column)
     data_counterfactual["counterfactual_index"] = 0
+    data_counterfactual["product"] = pd.to_numeric(data_counterfactual["product"], errors="coerce")
     #############################
     print("INFO: Counterfactual event log generated.")
+    print(data_counterfactual.head())
 
     return create_prefixes(data, data_counterfactual, case_id_column, train_ids, val_ids, test_ids, numerical_features), vocab_sizes, transition_system, activity_mapping
