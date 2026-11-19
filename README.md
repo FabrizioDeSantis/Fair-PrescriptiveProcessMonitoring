@@ -63,7 +63,7 @@ Place them in `data/` using these file names:
 | `hospital_billing_age`        | `data/hospital_billing_age.pkl`        | `age` (binarised: < 65 / ≥ 65) |
 | `hospital_billing_age_gender` | `data/hospital_billing_age_gender.pkl` | `age`, `gender`        |
 
-These five are the only supported values of `--dataset`; any other value fails. Each log needs:
+These are the supported values of `--dataset`. Each log needs:
 
 - a case ID column: `case_id` or `case:concept:name`
 - an activity column: `activity` or `concept:name`
@@ -134,14 +134,6 @@ All files are written to the current working directory unless noted.
 ## Simulating recommendations
 
 `prosit-recommendations-simulator/RecommendationsSimulator.ipynb` discovers a Petri net and simulation parameters from the BPI12 log, then replays the `*_recommended_activities*.csv` files to estimate how the recommendations change case durations. It contains absolute paths from the authors' machine (`/home/padela/...`) and expects `bpi12a.xes` one level above the notebook. Update these before running it.
-
-## Known issues
-
-These are bugs in the current code, not configuration problems:
-
-- **The recommendation step raises a `NameError`.** `recommend_act_loader` in `utils.py` calls `create_new_feat_vec`, which has been renamed to `create_single_new_feat_vec`.
-- **The recommendation step also raises a `TypeError`.** Every `recommend_act_loader(...)` call in `main.py` passes `args.seed` as an extra positional argument, so `save_to_file` is given twice.
-- **`transition_system/ts_creation.py`** changes into a hard-coded directory (`/home/padela/Desktop/...`) and has to be edited before it can run.
 
 ## Transition system
 
