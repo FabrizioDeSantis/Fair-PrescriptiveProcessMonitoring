@@ -95,14 +95,6 @@ if __name__ == "__main__":
         from data import preprocess_bpi12
         sensitive_attrs = ["gender"]
         (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
-    if args.dataset == "cancer":
-        from data import preprocess_cancer_log
-        sensitive_attrs = ["gender"]
-        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_cancer_log.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
-    elif args.dataset == "hospital":
-        from data import preprocess_hospital_log
-        sensitive_attrs = ["case:private_insurance", "case:gender", "case:citizen", "case:age", "case:underlying_condition"]
-        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_hospital_log.preprocess_eventlog(data, sensitive_attrs, args.abstraction_mode)
     elif args.dataset in ("hospital_billing_gender", "hospital_billing_age", "hospital_billing_age_gender"):
         from data import preprocess_hospital_billing_log
         sensitive_map = {
