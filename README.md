@@ -32,21 +32,19 @@ counterfactuals.py              Counterfactual event log generation (DoWhy GCM)
 utils.py                        Next-activity recommendation and counterfactual fairness
 transition_system/              Transition system (prefix -> next activities), see its README
 prosit-recommendations-simulator/   Notebook and simulator to replay recommendations on a BPI12 Petri net
-environment.yml                 Conda environment
 ```
 
 ## Installation
 
-```bash
-conda env create -f environment.yml
-conda activate fair-prescriptive-pm
-```
-
-`main.py` and its imports also need packages that `environment.yml` does not list yet:
+Use Python 3.11 and install the dependencies with pip:
 
 ```bash
-pip install matplotlib seaborn shap dowhy networkx
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install torch ltn pm4py causal-learn dowhy networkx numpy pandas scipy scikit-learn matplotlib seaborn shap catboost pyarrow
 ```
+
+The `condaenv.*.requirements.txt` files in the repository list only part of these packages.
 
 ## Data
 
@@ -141,8 +139,8 @@ All files are written to the current working directory unless noted.
 
 These are bugs in the current code, not configuration problems:
 
-- **`main.py` fails at import.** It imports `create_single_new_feat_vec` from `utils.py`, which only defines `create_new_feat_vec`.
-- **The recommendation step raises a `TypeError`.** Every `recommend_act_loader(...)` call in `main.py` passes `args.seed` as an extra positional argument, so `save_to_file` is given twice.
+- **The recommendation step raises a `NameError`.** `recommend_act_loader` in `utils.py` calls `create_new_feat_vec`, which has been renamed to `create_single_new_feat_vec`.
+- **The recommendation step also raises a `TypeError`.** Every `recommend_act_loader(...)` call in `main.py` passes `args.seed` as an extra positional argument, so `save_to_file` is given twice.
 - **`transition_system/ts_creation.py`** changes into a hard-coded directory (`/home/padela/Desktop/...`) and has to be edited before it can run.
 
 ## Transition system
