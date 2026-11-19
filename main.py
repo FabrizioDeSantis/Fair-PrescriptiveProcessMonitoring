@@ -82,7 +82,7 @@ if __name__ == "__main__":
     data[case_id_name] = data[case_id_name].astype('category').cat.codes + 1
     print("INFO: Dataset read successfully.")
     print("INFO: Preprocessing dataset...")
-    if args.dataset == "bpi12" or args.dataset == "bpi12_kappel":
+    if args.dataset == "bpi12":
         from data import preprocess_bpi12
         sensitive_attrs = ["gender"]
         (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi12.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
