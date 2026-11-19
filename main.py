@@ -111,10 +111,6 @@ if __name__ == "__main__":
         from data import preprocess_bpi13
         sensitive_attrs = ["organization country"]
         (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_bpi13.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
-    elif args.dataset == "renting":
-        from data import preprocess_renting_log
-        sensitive_attrs = ["case:gender"]
-        (case_ids_train, X_train, X_train_cf, y_train, case_ids_val, X_val, X_val_cf, y_val, case_ids_test, X_test, X_test_cf, y_test, seq_len, feature_names, scalers_training, scalers_val, scalers_test), vocab_sizes, transition_system, activity_mapping = preprocess_renting_log.preprocess_eventlog(data, args.dataset, sensitive_attrs, args.abstraction_mode)
     y_train_og = y_train[0]
     y_train_cf = y_train[1]
     y_val_og = y_val[0]
