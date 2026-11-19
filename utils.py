@@ -15,7 +15,7 @@ def compute_next_temporal_features(prev_day_of_week, prev_time_of_day, avg_execu
         'time_delta': time_delta
     }
 
-def create_new_feat_vec(original_feat_vec, cf_feat_vec, new_value, index, seq_len, features, avg_execution_time, scalers):
+def create_single_new_feat_vec(original_feat_vec, cf_feat_vec, new_value, index, seq_len, features, avg_execution_time, scalers):
     new_feat_vec = original_feat_vec.clone()
     new_feat_vec[index] = new_value
     new_cf_feat_vec = cf_feat_vec.clone()
