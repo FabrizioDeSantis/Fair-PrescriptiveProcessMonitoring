@@ -33,10 +33,8 @@ def get_args():
     parser.add_argument("--train_nesy", action="store_true", help="Train LTN model")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--dataset", type=str, default="bpi12", help="Dataset to use")
-    parser.add_argument("--backbone", type=str, default="lstm", help="Backbone model type: lstm or transformer")
     parser.add_argument("--learning_rate", type=float, default=0.0001, help="Learning rate for the optimizer")
     parser.add_argument("--abstraction_mode", type=str, default="sequence", help="Abstraction mode for transition system")
-    parser.add_argument("--k", type=int, default=1, help="Parameter k for transition system")
 
     return parser.parse_args()
 
