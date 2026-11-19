@@ -148,3 +148,22 @@ These are bugs in the current code, not configuration problems:
 ## Transition system
 
 See [`transition_system/README.MD`](transition_system/README.MD) for how the transition system is built, queried and saved.
+
+## Citation
+
+If you use this code, please cite:
+
+> F. De Santis, A. Padella, G. Park, F. Zanichelli, M. de Leoni. *Fairness in Prescriptive Process Analytics: Integrating Fairness Constraints into the Learning Phase.* In: Business Process Management (BPM). Springer Nature Switzerland, Cham, 2027, pp. 369–387. https://doi.org/10.1007/978-3-032-37777-7_23
+
+```bibtex
+@InProceedings{10.1007/978-3-032-37777-7_23,
+  author    = {De Santis, Fabrizio and Padella, Alessandro and Park, Gyunam and Zanichelli, Francesco and de Leoni, Massimiliano},
+  editor    = {Maggi, Fabrizio Maria and Leopold, Henrik and Santoro, Flavia and Gal, Avigdor},
+  title     = {Fairness in Prescriptive Process Analytics: Integrating Fairness Constraints into the Learning Phase},
+  booktitle = {Business Process Management},
+  year      = {2027},
+  publisher = {Springer Nature Switzerland},
+  address   = {Cham},
+  pages     = {369--387},
+}
+```
