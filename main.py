@@ -49,10 +49,6 @@ if __name__ == "__main__":
     print("INFO: Reading dataset...")
     if args.dataset == "bpi12":
         data = pd.read_pickle('data/bpi12.pkl')
-    elif args.dataset == "hospital":
-        data = pd.read_csv("data/hospital_log_medium.csv")
-    elif args.dataset == "cancer":
-        data = pd.read_pickle("data/cancer_screening.pkl")
     elif args.dataset == "hospital_billing_gender":
         data = pd.read_pickle("data/hospital_billing_gender.pkl")
     elif args.dataset == "hospital_billing_age":
@@ -61,9 +57,6 @@ if __name__ == "__main__":
         data = pd.read_pickle("data/hospital_billing_age_gender.pkl")
     elif args.dataset == "bpi13":
         data = pd.read_csv("data/bpi13i.csv")
-    elif args.dataset == "renting":
-        data = pd.read_csv("data/renting_log_high.csv")
-        data = data.drop(columns=["activity", "time", "case:protected", "@@index", "case:@@case_index", "case:case"])
 
     if 'case_id' in data.columns:
         case_id_name = 'case_id'
