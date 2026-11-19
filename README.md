@@ -17,7 +17,12 @@ pip install matplotlib seaborn shap dowhy networkx
 
 ## Data
 
-The event logs are **not included** in this repository. Place them in `data/` using these file names:
+The event logs are **not included** in this repository. Download them from:
+
+- **BPI Challenge 2013 (incidents)**: https://data.4tu.nl/articles/dataset/BPI_Challenge_2013_incidents/12693914
+- **Modified BPI Challenge 2012 and Hospital Billing** (with sensitive attributes): https://zenodo.org/records/15387576
+
+Place them in `data/` using these file names:
 
 | `--dataset`                   | Expected file                          | Sensitive attribute(s) |
 |-------------------------------|----------------------------------------|------------------------|
